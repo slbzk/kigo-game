@@ -733,7 +733,27 @@ setInterval(createSakuraPetal, 2000);
 
       <div class="score" id="score" style="display:none">
         スコア: <span id="scoreValue">0</span> / <span id="totalValue">0</span>
+        &nbsp;｜&nbsp; 残機: <span id="heartsDisplay">❤️❤️❤️</span>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ゲームオーバー画面 -->
+<div class="game-screen" id="gameOverScreen">
+  <div class="game-box" style="max-width:500px; text-align:center;">
+    <div style="font-size:5rem; margin-bottom:1rem;">💀</div>
+    <h2 style="font-family:'Zen Kurenaido',cursive; font-size:2.5rem; color:var(--vermillion); margin-bottom:1rem;">ゲームオーバー</h2>
+    <p style="font-size:1.1rem; color:var(--sumi); margin-bottom:0.5rem;">3回ミスしました…</p>
+    <div style="background:linear-gradient(135deg,rgba(255,69,0,0.1),rgba(255,215,0,0.1)); border:2px solid var(--kinpaku); border-radius:15px; padding:1.5rem; margin:1.5rem 0;">
+      <p style="font-size:1rem; color:var(--sumi); opacity:0.8; margin-bottom:0.5rem;">最終スコア</p>
+      <p style="font-family:'Zen Kurenaido',cursive; font-size:3rem; font-weight:900; color:var(--sumi);">
+        <span id="finalScore">0</span> <span style="font-size:1.5rem;">/ <span id="finalTotal">0</span></span>
+      </p>
+    </div>
+    <div style="display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
+      <button class="game-btn btn-primary" id="retryBtn" onclick="retryGame()" style="font-size:1rem;">🔄 もう一度</button>
+      <button class="game-btn btn-secondary" onclick="backToMenuFromGameOver()" style="font-size:1rem;">🏠 メニューへ</button>
     </div>
   </div>
 </div>
@@ -8322,7 +8342,39 @@ function getBoudaiExtended(boudai) {
 let ALL_KIGO = RAW.concat(BOUDAI_NEW.map(getBoudaiExtended));
 console.log(`総データ数: ${ALL_KIGO.length} (季語: ${RAW.length}, 傍題: ${BOUDAI_NEW.length})`);
 
-
+// 外部サイト(https://slbzk.github.io/kigo/)からデータを取得して置き換える
+(async function fetchExternalKigo() {
+  const candidates = [
+    'https://slbzk.github.io/kigo/kigo.js',
+    'https://slbzk.github.io/kigo/data.js',
+    'https://slbzk.github.io/kigo/kigo-data.js',
+    'https://slbzk.github.io/kigo/kigo_data.js',
+  ];
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (text.includes('{w:') || text.includes('"w":')) {
+        const blob = new Blob([text], {type: 'application/javascript'});
+        const blobURL = URL.createObjectURL(blob);
+        try {
+          await import(blobURL);
+          if (typeof EXTERNAL_KIGO !== 'undefined' && Array.isArray(EXTERNAL_KIGO)) {
+            ALL_KIGO = EXTERNAL_KIGO.map(k => k.type === 'boudai' ? getBoudaiExtended(k) : k);
+            console.log(`✅ 外部データ取得成功(${url}): ${ALL_KIGO.length}件`);
+          }
+        } finally {
+          URL.revokeObjectURL(blobURL);
+        }
+        break;
+      }
+    } catch(e) {
+      console.log(`外部データ取得失敗(${url}): 内蔵データを使用`);
+    }
+  }
+  console.log(`使用データ: ${ALL_KIGO.length}件`);
+})();
 
 // ゲーム状態管理
 let gameState = {
@@ -8333,7 +8385,9 @@ let gameState = {
   timeLeft: 20,
   score: 0,
   total: 0,
-  answered: false
+  answered: false,
+  mistakes: 0,   // ミス回数（3回でゲームオーバー）
+  lastType: null // リトライ用
 };
 
 // UI要素の参照
@@ -8386,7 +8440,9 @@ function startReadingGame() {
     timeLeft: 20,
     score: 0,
     total: 0,
-    answered: false
+    answered: false,
+    mistakes: 0,
+    lastType: 'reading'
   };
 
   gameScreen.classList.add('active');
@@ -8443,7 +8499,9 @@ function startSeasonGame() {
     timeLeft: 20,
     score: 0,
     total: 0,
-    answered: false
+    answered: false,
+    mistakes: 0,
+    lastType: 'season'
   };
 
   gameScreen.classList.add('active');
@@ -8625,6 +8683,36 @@ function updateTimer() {
 function updateScore() {
   document.getElementById('scoreValue').textContent = gameState.score;
   document.getElementById('totalValue').textContent = gameState.total;
+  // 残機ハート表示（3-mistakes個のハート）
+  const remaining = Math.max(0, 3 - gameState.mistakes);
+  const hearts = '❤️'.repeat(remaining) + '🖤'.repeat(3 - remaining);
+  document.getElementById('heartsDisplay').textContent = hearts;
+}
+
+// ゲームオーバー処理
+function triggerGameOver() {
+  gameState.isActive = false;
+  clearInterval(gameState.timer);
+  document.getElementById('gameScreen').classList.remove('active');
+  document.getElementById('finalScore').textContent = gameState.score;
+  document.getElementById('finalTotal').textContent = gameState.total;
+  document.getElementById('gameOverScreen').classList.add('active');
+}
+
+// リトライ
+function retryGame() {
+  document.getElementById('gameOverScreen').classList.remove('active');
+  if (gameState.lastType === 'reading') {
+    startReadingGame();
+  } else if (gameState.lastType === 'season') {
+    startSeasonGame();
+  }
+}
+
+// ゲームオーバーからメニューへ
+function backToMenuFromGameOver() {
+  document.getElementById('gameOverScreen').classList.remove('active');
+  resetGameUI();
 }
 
 // 回答送信
@@ -8647,16 +8735,24 @@ function submitAnswer() {
       }
     }, 3000);
   } else {
-    // 不正解時は時間継続、再入力可能
-    showResult('不正解です。もう一度考えてみてください！', 'incorrect');
-    gameInput.value = '';
-    gameInput.focus();
-
-    setTimeout(() => {
-      if (gameState.isActive && !gameState.answered) {
-        result.style.display = 'none';
-      }
-    }, 2000);
+    // ミスカウント
+    gameState.mistakes++;
+    updateScore();
+    if (gameState.mistakes >= 3) {
+      gameState.answered = true;
+      clearInterval(gameState.timer);
+      showResult(`不正解！正解は「${correctAnswer}」\n3回ミスしました…`, 'incorrect');
+      setTimeout(() => triggerGameOver(), 2500);
+    } else {
+      showResult(`不正解です。残り${3 - gameState.mistakes}回ミスでゲームオーバー！`, 'incorrect');
+      gameInput.value = '';
+      gameInput.focus();
+      setTimeout(() => {
+        if (gameState.isActive && !gameState.answered) {
+          result.style.display = 'none';
+        }
+      }, 2000);
+    }
   }
 }
 
@@ -8685,17 +8781,26 @@ function submitSeasonAnswer(selectedSeason) {
   if (selectedSeason === correctSeason) {
     gameState.score++;
     showResult(`正解！「${gameState.currentKigo.w}」は${correctSeason}の季語です。`, 'correct');
+    updateScore();
+    setTimeout(() => {
+      if (gameState.isActive) {
+        nextSeasonQuestion();
+      }
+    }, 4000);
   } else {
+    gameState.mistakes++;
     showResult(`不正解。「${gameState.currentKigo.w}」は${correctSeason}の季語です。`, 'incorrect');
-  }
-
-  updateScore();
-
-  setTimeout(() => {
-    if (gameState.isActive) {
-      nextSeasonQuestion();
+    updateScore();
+    if (gameState.mistakes >= 3) {
+      setTimeout(() => triggerGameOver(), 2500);
+    } else {
+      setTimeout(() => {
+        if (gameState.isActive) {
+          nextSeasonQuestion();
+        }
+      }, 4000);
     }
-  }, 4000);
+  }
 }
 
 // スキップ
@@ -8704,22 +8809,28 @@ function skipQuestion() {
 
   gameState.answered = true;
   clearInterval(gameState.timer);
+  gameState.mistakes++;
 
   let message = '';
   if (gameState.type === 'reading') {
     message = `スキップしました。答えは「${gameState.currentKigo.k}」でした。`;
-    setTimeout(() => {
-      if (gameState.isActive) nextReadingQuestion();
-    }, 3000);
   } else if (gameState.type === 'season') {
     message = `スキップしました。「${gameState.currentKigo.w}」は${gameState.currentKigo.s}の季語でした。`;
-    setTimeout(() => {
-      if (gameState.isActive) nextSeasonQuestion();
-    }, 4000);
+    document.querySelectorAll('.season-option').forEach(btn => { btn.disabled = true; });
   }
 
   showResult(message, 'incorrect');
   updateScore();
+
+  if (gameState.mistakes >= 3) {
+    setTimeout(() => triggerGameOver(), 2500);
+  } else {
+    if (gameState.type === 'reading') {
+      setTimeout(() => { if (gameState.isActive) nextReadingQuestion(); }, 3000);
+    } else if (gameState.type === 'season') {
+      setTimeout(() => { if (gameState.isActive) nextSeasonQuestion(); }, 4000);
+    }
+  }
 }
 
 // 時間切れ
@@ -8728,33 +8839,31 @@ function timeUp() {
 
   gameState.answered = true;
   clearInterval(gameState.timer);
+  gameState.mistakes++;
 
   let message = '';
   if (gameState.type === 'reading') {
     message = `時間切れ！正解は「${gameState.currentKigo.k}」でした。`;
-    setTimeout(() => {
-      if (gameState.isActive) nextReadingQuestion();
-    }, 4000);
-  } else if (gameState.type === 'season') {
-    message = `時間切れ！「${gameState.currentKigo.w}」は${gameState.currentKigo.s}の季語でした。`;
-    setTimeout(() => {
-      if (gameState.isActive) nextSeasonQuestion();
-    }, 4000);
-  }
-
-  showResult(message, 'incorrect');
-  updateScore();
-
-  if (gameState.type === 'reading') {
     gameInput.disabled = true;
     submitBtn.style.display = 'none';
   } else if (gameState.type === 'season') {
-    document.querySelectorAll('.season-option').forEach(btn => {
-      btn.disabled = true;
-    });
+    message = `時間切れ！「${gameState.currentKigo.w}」は${gameState.currentKigo.s}の季語でした。`;
+    document.querySelectorAll('.season-option').forEach(btn => { btn.disabled = true; });
   }
 
   skipBtn.style.display = 'none';
+  showResult(message, 'incorrect');
+  updateScore();
+
+  if (gameState.mistakes >= 3) {
+    setTimeout(() => triggerGameOver(), 2500);
+  } else {
+    if (gameState.type === 'reading') {
+      setTimeout(() => { if (gameState.isActive) nextReadingQuestion(); }, 4000);
+    } else if (gameState.type === 'season') {
+      setTimeout(() => { if (gameState.isActive) nextSeasonQuestion(); }, 4000);
+    }
+  }
 }
 
 function showResult(message, type) {
